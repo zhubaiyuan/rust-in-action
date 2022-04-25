@@ -1,6 +1,9 @@
 #![allow(unused_variables)]
 
+use std::cell::RefCell;
 use std::rc::Rc;
+
+type GdSn = Rc<RefCell<GroundStation>>;
 
 #[derive(Debug)]
 struct CubeSat {
@@ -19,7 +22,9 @@ struct Message {
 }
 
 #[derive(Debug)]
-struct GroundStation {}
+struct GroundStation {
+    radio_freq: f64,
+}
 
 impl Mailbox {
     fn post(&mut self, msg: Message) {
@@ -37,7 +42,12 @@ impl Mailbox {
     }
 }
 
-impl GroundStation {
+trait Network {
+    fn connect(&self, sat_id: u64) -> CubeSat;
+    fn send(&self, mailbox: &mut Mailbox, msg: Message);
+}
+
+impl Network for GdSn {
     fn connect(&self, sat_id: u64) -> CubeSat {
         CubeSat { id: sat_id }
     }
@@ -59,8 +69,19 @@ fn fetch_sat_ids() -> Vec<u64> {
 
 fn main() {
     let mut mail = Mailbox { messages: vec![] };
-    let base = Rc::new(GroundStation {});
-    println!("{:?}", base);
+    let base: Rc<RefCell<GroundStation>> =
+        Rc::new(RefCell::new(GroundStation { radio_freq: 87.65 }));
+    println!("base: {:?}", base);
+    {
+        let mut base_2 = base.borrow_mut();
+        base_2.radio_freq -= 12.34;
+        println!("base_2: {:?}", base_2);
+    }
+    println!("base: {:?}", base);
+    let mut base_3 = base.borrow_mut();
+    base_3.radio_freq += 43.21;
+    println!("base: {:?}", base);
+    println!("base_3: {:?}", base_3);
     let sat_ids = fetch_sat_ids();
     for sat_id in sat_ids {
         let sat = base.connect(sat_id);
