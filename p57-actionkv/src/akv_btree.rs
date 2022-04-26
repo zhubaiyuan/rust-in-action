@@ -30,16 +30,12 @@ Usage:
 
 type ByteStr = [u8];
 type ByteString = Vec<u8>;
-// we'll wrap values in options to allow us to sidestep the implementation of delete.
-// delete(key) can become insert(key, None).
 type Value = Option<u64>;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Node {
     keys: Vec<ByteString>,
     values: Vec<Value>,
-    /* also called _b_ for branching factor, _m_ for _m_-way tree (as a contraction from multi-way tree)
-     * and _n_ or _k_ for _n_-ary/_k_-ary tree from the word arity */
     order: usize,
     is_root: bool,
     kind: NodeKind,
@@ -48,7 +44,6 @@ struct Node {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 enum NodeKind {
     Leaf,
-    // Also called internal
     Branch,
 }
 
@@ -110,16 +105,11 @@ impl Node {
     }
 
     fn insert_option_directly(&mut self, key: &ByteString, value: Value) -> Option<Self> {
-        // should be redundant, unstable here means that equivalent keys
         self.keys.sort_unstable();
-        // could swap places. Unique [u8] will never compare as equivalent, so we can use this as a fast path that uses
-        // constant memory.
         self.values.sort_unstable();
         match self.keys.binary_search(key) {
-            // found - update in-place
             Ok(position) => self.values[position] = value,
             Err(position) => {
-                // the Err(position) provides the position where the item should be inserted to keep Vec<_> sorted
                 self.keys.insert(position, key.clone());
                 self.values.insert(position, value);
             }
@@ -133,7 +123,6 @@ impl Node {
     }
 
     fn split(&mut self) -> Self {
-        // integer division
         let mid = self.keys.len() / 2;
         let r_keys = self.keys.split_off(mid);
         let r_vals = self.values.split_off(mid);
@@ -156,7 +145,6 @@ impl Node {
 
     fn from_bincode(source: &ByteStr) -> Self {
         let mut future_self: Self = bincode::deserialize(source).unwrap();
-        // just in case something got lost in translation
         future_self.keys.sort_unstable();
         future_self.values.sort_unstable();
         future_self
@@ -165,8 +153,6 @@ impl Node {
 
 pub struct BPlusTree<'a> {
     order: usize,
-    // root: Option<Node>,
-    // lifetime 'a this means the ActionKV must live as long as BPlusTree
     action_kv: &'a mut ActionKV,
     root_position: Option<u64>,
 }
@@ -196,10 +182,7 @@ impl<'a> BPlusTree<'a> {
     }
 
     fn insert_option_directly(&mut self, key: &ByteString, value: Value) {
-        // const BACKEND_KEY: [u8; 6] = *b"+index";
-        // when matching a tuple, mut is provided before the variable name, rather than before the left parenthesis.
         let (maybe_leaf, mut history) = self.find_leaf(key);
-
         let mut node_to_save = match (maybe_leaf, history.len()) {
             (Some(node), _) => node,
             (None, 0) => Node::new(self.order, NodeKind::Leaf, true),
@@ -211,26 +194,21 @@ impl<'a> BPlusTree<'a> {
 
         while history.len() > 0 {
             let parent = history.pop();
-            // note: `Node` and `BPlusTree` both have insert()/insert_option_directly() methods
             let maybe_new_node = node_to_save.insert_option_directly(key, value);
             if let Some(new_node_to_save) = maybe_new_node {
                 let new_node_to_save_ = new_node_to_save.to_bincode();
                 let new_node_position = self.action_kv.seek_to_end().unwrap();
                 self.action_kv.insert(&NODE_KEY, &new_node_to_save_);
-                //add_to_parent = Some((node_to_save.keys[0], new_node_position));
                 if node_to_save.is_root() {
                     debug_assert_eq!(history.len(), 0);
                     node_to_save.is_root = false;
                     let mut new_root = Node::new(self.order, NodeKind::Branch, true);
                     new_root.insert(&new_node_to_save.keys[0], new_node_position);
-                    history.insert(0, new_root); // nodes will be added to this one via the normal process
+                    history.insert(0, new_root);
                 }
-                // parent.insert(new_leaf.keys[0], new_position); // will occassionally split
             }
             let node_to_save_ = node_to_save.to_bincode();
             let new_position = self.action_kv.seek_to_end().unwrap();
-            // okay for nodes in the tree to overlap their key in the underlying storage system, as they are not used within
-            // the btree itself
             self.action_kv.insert(&NODE_KEY, &node_to_save_);
             let key = &node_to_save.keys[0];
             let value = Some(new_position);
@@ -241,11 +219,8 @@ impl<'a> BPlusTree<'a> {
     pub fn get(&mut self, key: &ByteString) -> Value {
         let (maybe_leaf, _history) = self.find_leaf(key);
         if let Some(leaf) = maybe_leaf {
-            // return the result of looking in the leaf node (an Option, as the key may have been deleted even
-            // if it's present)
             leaf.get(key)
         } else {
-            // or return None if the key isn't in the tree
             None
         }
     }
@@ -253,7 +228,6 @@ impl<'a> BPlusTree<'a> {
     fn find_leaf(&mut self, key: &ByteStr) -> (Option<Node>, Vec<Node>) {
         let mut nodes_visited: Vec<Node> = vec![];
         let next = match self.root_position {
-            // note: early return
             None => return (None, nodes_visited),
             Some(position) => position,
         };
@@ -265,7 +239,6 @@ impl<'a> BPlusTree<'a> {
                 return (Some(node), nodes_visited);
             }
             if let Some(last_key_in_node) = node.keys.last() {
-                // Vec<T>::last() returns Option is case the Vec<T> is empty
                 if key >= last_key_in_node {
                     let next = node.values.last().unwrap();
                     continue;
@@ -273,7 +246,6 @@ impl<'a> BPlusTree<'a> {
             }
             for (i, key_in_node) in node.keys.iter().enumerate() {
                 if key < key_in_node {
-                    // branch nodes can't be deleted
                     let next = node.values[i].unwrap();
                     break;
                 }
@@ -306,8 +278,6 @@ fn main() {
                 println!("{:?}", kv.value);
             }
         },
-        // Other actions can actually remain as-is. In a long-standing application, it would be
-        // necessary to clean up the index. As this utility is one-shot, it isn't essential here.
         "delete" => index.delete(&key),
         "insert" | "update" => {
             let value = maybe_value.expect(&USAGE).as_ref();

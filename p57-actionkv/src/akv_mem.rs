@@ -25,21 +25,21 @@ fn main() {
     let key = args.get(3).expect(&USAGE).as_ref();
     let maybe_value = args.get(4);
     let path = std::path::Path::new(&fname);
-    let mut store = ActionKV::open(path).expect("unable to open file");
-    store.load().expect("unable to load data");
+    let mut a = ActionKV::open(path).expect("unable to open file");
+    a.load().expect("unable to load data");
     match action {
-        "get" => match store.get(key).unwrap() {
+        "get" => match a.get(key).unwrap() {
             None => eprintln!("{:?} not found", key),
             Some(value) => println!("{:?}", value),
         },
-        "delete" => store.delete(key).unwrap(),
+        "delete" => a.delete(key).unwrap(),
         "insert" => {
             let value = maybe_value.expect(&USAGE).as_ref();
-            store.insert(key, value).unwrap()
+            a.insert(key, value).unwrap()
         }
         "update" => {
             let value = maybe_value.expect(&USAGE).as_ref();
-            store.update(key, value).unwrap()
+            a.update(key, value).unwrap()
         }
         _ => eprintln!("{}", &USAGE),
     }
